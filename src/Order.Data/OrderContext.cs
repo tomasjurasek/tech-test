@@ -192,15 +192,5 @@ namespace Order.Data
         }
 
         private bool IsSqliteProviderUsed => Database.ProviderName == "Microsoft.EntityFrameworkCore.Sqlite";
-
-        /// <summary>
-        /// Sqlite is used only for in memory database in tests.
-        /// Todo: This might be replaced with proper conversion in method above.
-        /// </summary>
-        /// <returns></returns>
-        public bool IsInMemoryDatabase()
-        {
-            return Database.IsInMemory() || IsSqliteProviderUsed;
-        }
     }
 }

@@ -1,9 +1,6 @@
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using Order.Model;
 using Order.Service;
-using System;
-using System.Threading.Tasks;
 
 namespace OrderService.WebAPI.Controllers
 {
@@ -19,10 +16,10 @@ namespace OrderService.WebAPI.Controllers
         }
 
         [HttpGet]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        public async Task<IActionResult> Get()
+        [ProducesResponseType(typeof(IEnumerable<OrderSummary>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> Get(CancellationToken cancellationToken)
         {
-            var orders = await _orderService.GetOrdersAsync();
+            var orders = await _orderService.GetOrdersAsync(cancellationToken);
             return Ok(orders);
         }
 
@@ -31,27 +28,27 @@ namespace OrderService.WebAPI.Controllers
         /// precedence over route parameters, so /orders/profit is unambiguous.
         /// </summary>
         [HttpGet("profit")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetProfitByMonth()
+        [ProducesResponseType(typeof(IEnumerable<MonthlyProfit>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetProfitByMonth(CancellationToken cancellationToken)
         {
-            var profit = await _orderService.GetCompletedOrderProfitByMonthAsync();
+            var profit = await _orderService.GetCompletedOrderProfitByMonthAsync(cancellationToken);
             return Ok(profit);
         }
 
         [HttpGet("status/{statusName}")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
-        public async Task<IActionResult> GetOrdersByStatus(string statusName)
+        [ProducesResponseType(typeof(IEnumerable<OrderSummary>), StatusCodes.Status200OK)]
+        public async Task<IActionResult> GetOrdersByStatus(string statusName, CancellationToken cancellationToken)
         {
-            var orders = await _orderService.GetOrdersByStatusAsync(statusName);
+            var orders = await _orderService.GetOrdersByStatusAsync(statusName, cancellationToken);
             return Ok(orders);
         }
 
-        [HttpGet("{orderId}")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
+        [HttpGet("{orderId:guid}")]
+        [ProducesResponseType(typeof(OrderDetail), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> GetOrderById(Guid orderId)
+        public async Task<IActionResult> GetOrderById(Guid orderId, CancellationToken cancellationToken)
         {
-            var order = await _orderService.GetOrderByIdAsync(orderId);
+            var order = await _orderService.GetOrderByIdAsync(orderId, cancellationToken);
             if (order != null)
             {
                 return Ok(order);
@@ -63,26 +60,28 @@ namespace OrderService.WebAPI.Controllers
         }
 
         [HttpPost]
-        [ProducesResponseType(StatusCodes.Status201Created)]
+        [ProducesResponseType(typeof(OrderDetail), StatusCodes.Status201Created)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<IActionResult> CreateOrder([FromBody] CreateOrderRequest request)
+        public async Task<IActionResult> CreateOrder([FromBody] CreateOrderRequest request, CancellationToken cancellationToken)
         {
-            var result = await _orderService.CreateOrderAsync(request);
+            var result = await _orderService.CreateOrderAsync(request, cancellationToken);
             if (!result.IsSuccess)
             {
                 return MapFailure(result);
             }
 
-            return CreatedAtAction(nameof(GetOrderById), new { orderId = result.Value.Id }, result.Value);
+            return CreatedAtAction(nameof(GetOrderById), new { orderId = result.Value!.Id }, result.Value);
         }
 
-        [HttpPut("{orderId}/status")]
-        [ProducesResponseType(StatusCodes.Status200OK)]
+        [HttpPut("{orderId:guid}/status")]
+        [ProducesResponseType(typeof(OrderDetail), StatusCodes.Status200OK)]
         [ProducesResponseType(StatusCodes.Status400BadRequest)]
         [ProducesResponseType(StatusCodes.Status404NotFound)]
-        public async Task<IActionResult> UpdateOrderStatus(Guid orderId, [FromBody] UpdateOrderStatusRequest request)
+        public async Task<IActionResult> UpdateOrderStatus(Guid orderId, [FromBody] UpdateOrderStatusRequest request, CancellationToken cancellationToken)
         {
-            var result = await _orderService.UpdateOrderStatusAsync(orderId, request.Status);
+            // [ApiController] short-circuits on invalid ModelState, so [Required]
+            // guarantees Status is present by the time this runs.
+            var result = await _orderService.UpdateOrderStatusAsync(orderId, request.Status!, cancellationToken);
             if (!result.IsSuccess)
             {
                 return MapFailure(result);

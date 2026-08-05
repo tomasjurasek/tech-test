@@ -1,6 +1,3 @@
-using System;
-using System.Collections.Generic;
-
 namespace Order.Model
 {
     public enum OperationOutcome
@@ -16,9 +13,9 @@ namespace Order.Model
     /// </summary>
     public class OperationResult<T>
     {
-        private static readonly IReadOnlyList<string> NoErrors = new List<string>().AsReadOnly();
+        private static readonly IReadOnlyList<string> NoErrors = [];
 
-        private OperationResult(OperationOutcome outcome, T value, IReadOnlyList<string> errors)
+        private OperationResult(OperationOutcome outcome, T? value, IReadOnlyList<string> errors)
         {
             Outcome = outcome;
             Value = value;
@@ -27,7 +24,8 @@ namespace Order.Model
 
         public OperationOutcome Outcome { get; }
 
-        public T Value { get; }
+        /// <summary>Set only when <see cref="IsSuccess"/> is true.</summary>
+        public T? Value { get; }
 
         public IReadOnlyList<string> Errors { get; }
 
@@ -50,7 +48,7 @@ namespace Order.Model
                 throw new ArgumentException("An invalid result must describe at least one error.", nameof(errors));
             }
 
-            return new OperationResult<T>(OperationOutcome.Invalid, default, new List<string>(errors).AsReadOnly());
+            return new OperationResult<T>(OperationOutcome.Invalid, default, errors);
         }
     }
 }

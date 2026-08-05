@@ -1,10 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Order.Model;
-using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Linq.Expressions;
-using System.Threading.Tasks;
 
 namespace Order.Data
 {
@@ -13,10 +9,12 @@ namespace Order.Data
         private const string DefaultOrderStatus = "Created";
 
         private readonly OrderContext _orderContext;
+        private readonly TimeProvider _timeProvider;
 
-        public OrderRepository(OrderContext orderContext)
+        public OrderRepository(OrderContext orderContext, TimeProvider timeProvider)
         {
             _orderContext = orderContext;
+            _timeProvider = timeProvider;
         }
 
         /// <summary>
@@ -32,22 +30,22 @@ namespace Order.Data
                 StatusId = new Guid(x.StatusId),
                 StatusName = x.Status.Name,
                 ItemCount = x.Items.Count,
-                TotalCost = x.Items.Sum(i => i.Quantity * i.Product.UnitCost).Value,
-                TotalPrice = x.Items.Sum(i => i.Quantity * i.Product.UnitPrice).Value,
+                TotalCost = x.Items.Sum(i => i.Quantity * i.Product.UnitCost) ?? 0,
+                TotalPrice = x.Items.Sum(i => i.Quantity * i.Product.UnitPrice) ?? 0,
                 CreatedDate = x.CreatedDate
             };
 
-        public async Task<IEnumerable<OrderSummary>> GetOrdersAsync()
+        public async Task<IEnumerable<OrderSummary>> GetOrdersAsync(CancellationToken cancellationToken = default)
         {
             var orders = await _orderContext.Order
                 .Select(ToOrderSummary)
                 .OrderByDescending(x => x.CreatedDate)
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
 
             return orders;
         }
 
-        public async Task<IEnumerable<OrderSummary>> GetOrdersByStatusAsync(string statusName)
+        public async Task<IEnumerable<OrderSummary>> GetOrdersByStatusAsync(string statusName, CancellationToken cancellationToken = default)
         {
             var normalisedStatus = NormaliseStatus(statusName);
 
@@ -55,17 +53,17 @@ namespace Order.Data
                 .Where(x => x.Status.Name.ToLower() == normalisedStatus)
                 .Select(ToOrderSummary)
                 .OrderByDescending(x => x.CreatedDate)
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
 
             return orders;
         }
 
-        public async Task<OrderDetail> GetOrderByIdAsync(Guid orderId)
+        public async Task<OrderDetail?> GetOrderByIdAsync(Guid orderId, CancellationToken cancellationToken = default)
         {
             var orderIdBytes = orderId.ToByteArray();
 
             var order = await _orderContext.Order
-                .Where(x => _orderContext.Database.IsInMemory() ? x.Id.SequenceEqual(orderIdBytes) : x.Id == orderIdBytes)
+                .Where(x => x.Id == orderIdBytes)
                 .Select(x => new OrderDetail
                 {
                     Id = new Guid(x.Id),
@@ -74,8 +72,8 @@ namespace Order.Data
                     StatusId = new Guid(x.StatusId),
                     StatusName = x.Status.Name,
                     CreatedDate = x.CreatedDate,
-                    TotalCost = x.Items.Sum(i => i.Quantity * i.Product.UnitCost).Value,
-                    TotalPrice = x.Items.Sum(i => i.Quantity * i.Product.UnitPrice).Value,
+                    TotalCost = x.Items.Sum(i => i.Quantity * i.Product.UnitCost) ?? 0,
+                    TotalPrice = x.Items.Sum(i => i.Quantity * i.Product.UnitPrice) ?? 0,
                     Items = x.Items.Select(i => new Model.OrderItem
                     {
                         Id = new Guid(i.Id),
@@ -86,44 +84,49 @@ namespace Order.Data
                         ProductName = i.Product.Name,
                         UnitCost = i.Product.UnitCost,
                         UnitPrice = i.Product.UnitPrice,
-                        TotalCost = i.Product.UnitCost * i.Quantity.Value,
-                        TotalPrice = i.Product.UnitPrice * i.Quantity.Value,
-                        Quantity = i.Quantity.Value
+                        // Quantity is nullable in the schema; a missing quantity
+                        // contributes nothing rather than throwing on materialisation.
+                        TotalCost = i.Product.UnitCost * (i.Quantity ?? 0),
+                        TotalPrice = i.Product.UnitPrice * (i.Quantity ?? 0),
+                        Quantity = i.Quantity ?? 0
                     })
-                }).SingleOrDefaultAsync();
+                }).SingleOrDefaultAsync(cancellationToken);
 
             return order;
         }
 
-        public async Task<OperationResult<OrderDetail>> UpdateOrderStatusAsync(Guid orderId, string statusName)
+        public async Task<OperationResult<OrderDetail>> UpdateOrderStatusAsync(Guid orderId, string statusName, CancellationToken cancellationToken = default)
         {
             var orderIdBytes = orderId.ToByteArray();
 
             var order = await _orderContext.Order
-                .SingleOrDefaultAsync(x => _orderContext.Database.IsInMemory()
-                    ? x.Id.SequenceEqual(orderIdBytes)
-                    : x.Id == orderIdBytes);
+                .SingleOrDefaultAsync(x => x.Id == orderIdBytes, cancellationToken);
 
             if (order == null)
             {
                 return OperationResult<OrderDetail>.NotFound();
             }
 
-            var status = await FindStatusAsync(statusName);
+            var status = await FindStatusAsync(statusName, cancellationToken);
             if (status == null)
             {
                 return OperationResult<OrderDetail>.Invalid(UnknownStatusMessage(statusName));
             }
 
             order.StatusId = status.Id;
-            await _orderContext.SaveChangesAsync();
+            await _orderContext.SaveChangesAsync(cancellationToken);
 
-            return OperationResult<OrderDetail>.Success(await GetOrderByIdAsync(orderId));
+            return Success(await GetOrderByIdAsync(orderId, cancellationToken));
         }
 
-        public async Task<OperationResult<OrderDetail>> CreateOrderAsync(CreateOrderRequest request)
+        public async Task<OperationResult<OrderDetail>> CreateOrderAsync(CreateOrderRequest request, CancellationToken cancellationToken = default)
         {
-            var status = await FindStatusAsync(DefaultOrderStatus);
+            if (request.Items == null || request.Items.Count == 0)
+            {
+                return OperationResult<OrderDetail>.Invalid("An order must contain at least one item.");
+            }
+
+            var status = await FindStatusAsync(DefaultOrderStatus, cancellationToken);
             if (status == null)
             {
                 return OperationResult<OrderDetail>.Invalid(
@@ -137,7 +140,7 @@ namespace Order.Data
 
             var products = await _orderContext.OrderProduct
                 .Where(p => requestedProductIdBytes.Contains(p.Id))
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
 
             var productsById = products.ToDictionary(p => new Guid(p.Id));
 
@@ -145,7 +148,7 @@ namespace Order.Data
                 .Where(id => !productsById.ContainsKey(id))
                 .ToList();
 
-            if (unknownProductIds.Any())
+            if (unknownProductIds.Count > 0)
             {
                 return OperationResult<OrderDetail>.Invalid(unknownProductIds
                     .Select(id => $"Product '{id}' does not exist.")
@@ -161,7 +164,7 @@ namespace Order.Data
                 ResellerId = request.ResellerId.ToByteArray(),
                 CustomerId = request.CustomerId.ToByteArray(),
                 StatusId = status.Id,
-                CreatedDate = DateTime.UtcNow
+                CreatedDate = _timeProvider.GetUtcNow().UtcDateTime
             });
 
             foreach (var item in request.Items)
@@ -178,12 +181,12 @@ namespace Order.Data
                 });
             }
 
-            await _orderContext.SaveChangesAsync();
+            await _orderContext.SaveChangesAsync(cancellationToken);
 
-            return OperationResult<OrderDetail>.Success(await GetOrderByIdAsync(orderId));
+            return Success(await GetOrderByIdAsync(orderId, cancellationToken));
         }
 
-        public async Task<IEnumerable<MonthlyProfit>> GetProfitByMonthAsync(string statusName)
+        public async Task<IEnumerable<MonthlyProfit>> GetProfitByMonthAsync(string statusName, CancellationToken cancellationToken = default)
         {
             var normalisedStatus = NormaliseStatus(statusName);
 
@@ -196,31 +199,43 @@ namespace Order.Data
                 {
                     Year = g.Key.Year,
                     Month = g.Key.Month,
-                    TotalCost = g.Sum(i => i.Quantity.Value * i.Product.UnitCost),
-                    TotalPrice = g.Sum(i => i.Quantity.Value * i.Product.UnitPrice)
+                    TotalCost = g.Sum(i => (i.Quantity ?? 0) * i.Product.UnitCost),
+                    TotalPrice = g.Sum(i => (i.Quantity ?? 0) * i.Product.UnitPrice)
                 })
                 .OrderBy(x => x.Year)
                 .ThenBy(x => x.Month)
-                .ToListAsync();
+                .ToListAsync(cancellationToken);
 
             return profitByMonth;
         }
 
-        private async Task<Entities.OrderStatus> FindStatusAsync(string statusName)
+        private async Task<Entities.OrderStatus?> FindStatusAsync(string statusName, CancellationToken cancellationToken)
         {
             var normalisedStatus = NormaliseStatus(statusName);
 
             return await _orderContext.OrderStatus
-                .SingleOrDefaultAsync(x => x.Name.ToLower() == normalisedStatus);
+                .SingleOrDefaultAsync(x => x.Name.ToLower() == normalisedStatus, cancellationToken);
         }
 
         /// <summary>
-        /// Status names are compared case-insensitively via ToLower so the
-        /// behaviour is the same on MySQL and on the SQLite database used by tests.
+        /// The order was just written or read back by id, so a null here means the
+        /// row vanished underneath us rather than an expected "not found".
         /// </summary>
-        private static string NormaliseStatus(string statusName)
+        private static OperationResult<OrderDetail> Success(OrderDetail? order)
         {
-            return (statusName ?? string.Empty).Trim().ToLower();
+            return order == null
+                ? OperationResult<OrderDetail>.NotFound()
+                : OperationResult<OrderDetail>.Success(order);
+        }
+
+        /// <summary>
+        /// Status names are compared case-insensitively. The database side uses
+        /// ToLower because that is what EF can translate to SQL LOWER; the client
+        /// side uses the invariant culture so the two always agree.
+        /// </summary>
+        private static string NormaliseStatus(string? statusName)
+        {
+            return (statusName ?? string.Empty).Trim().ToLowerInvariant();
         }
 
         private static string UnknownStatusMessage(string statusName)

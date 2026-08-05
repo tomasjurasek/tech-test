@@ -1,8 +1,5 @@
 using Order.Data;
 using Order.Model;
-using System;
-using System.Collections.Generic;
-using System.Threading.Tasks;
 
 namespace Order.Service
 {
@@ -20,44 +17,44 @@ namespace Order.Service
             _orderRepository = orderRepository;
         }
 
-        public async Task<IEnumerable<OrderSummary>> GetOrdersAsync()
+        public async Task<IEnumerable<OrderSummary>> GetOrdersAsync(CancellationToken cancellationToken = default)
         {
-            var orders = await _orderRepository.GetOrdersAsync();
+            var orders = await _orderRepository.GetOrdersAsync(cancellationToken);
             return orders;
         }
 
-        public async Task<OrderDetail> GetOrderByIdAsync(Guid orderId)
+        public async Task<OrderDetail?> GetOrderByIdAsync(Guid orderId, CancellationToken cancellationToken = default)
         {
-            var order = await _orderRepository.GetOrderByIdAsync(orderId);
+            var order = await _orderRepository.GetOrderByIdAsync(orderId, cancellationToken);
             return order;
         }
 
-        public async Task<IEnumerable<OrderSummary>> GetOrdersByStatusAsync(string statusName)
+        public async Task<IEnumerable<OrderSummary>> GetOrdersByStatusAsync(string statusName, CancellationToken cancellationToken = default)
         {
-            var orders = await _orderRepository.GetOrdersByStatusAsync(statusName);
+            var orders = await _orderRepository.GetOrdersByStatusAsync(statusName, cancellationToken);
             return orders;
         }
 
-        public async Task<OperationResult<OrderDetail>> UpdateOrderStatusAsync(Guid orderId, string statusName)
+        public async Task<OperationResult<OrderDetail>> UpdateOrderStatusAsync(Guid orderId, string statusName, CancellationToken cancellationToken = default)
         {
-            var result = await _orderRepository.UpdateOrderStatusAsync(orderId, statusName);
+            var result = await _orderRepository.UpdateOrderStatusAsync(orderId, statusName, cancellationToken);
             return result;
         }
 
-        public async Task<OperationResult<OrderDetail>> CreateOrderAsync(CreateOrderRequest request)
+        public async Task<OperationResult<OrderDetail>> CreateOrderAsync(CreateOrderRequest request, CancellationToken cancellationToken = default)
         {
             if (request == null)
             {
                 return OperationResult<OrderDetail>.Invalid("An order must be supplied.");
             }
 
-            var result = await _orderRepository.CreateOrderAsync(request);
+            var result = await _orderRepository.CreateOrderAsync(request, cancellationToken);
             return result;
         }
 
-        public async Task<IEnumerable<MonthlyProfit>> GetCompletedOrderProfitByMonthAsync()
+        public async Task<IEnumerable<MonthlyProfit>> GetCompletedOrderProfitByMonthAsync(CancellationToken cancellationToken = default)
         {
-            var profit = await _orderRepository.GetProfitByMonthAsync(CompletedStatus);
+            var profit = await _orderRepository.GetProfitByMonthAsync(CompletedStatus, cancellationToken);
             return profit;
         }
     }

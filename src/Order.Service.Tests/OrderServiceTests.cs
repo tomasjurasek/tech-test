@@ -15,10 +15,11 @@ namespace Order.Service.Tests
 {
     public class OrderServiceTests
     {
-        private IOrderService _orderService;
-        private IOrderRepository _orderRepository;
-        private OrderContext _orderContext;
-        private DbConnection _connection;
+        // Assigned in [SetUp], which NUnit runs before every test.
+        private IOrderService _orderService = null!;
+        private IOrderRepository _orderRepository = null!;
+        private OrderContext _orderContext = null!;
+        private DbConnection _connection = null!;
 
         private readonly byte[] _orderStatusCreatedId = Guid.NewGuid().ToByteArray();
         private readonly byte[] _orderStatusInProgressId = Guid.NewGuid().ToByteArray();
@@ -37,13 +38,13 @@ namespace Order.Service.Tests
                 .EnableSensitiveDataLogging(true)
                 .Options;
 
-            _connection = RelationalOptionsExtension.Extract(options).Connection;
+            _connection = RelationalOptionsExtension.Extract(options).Connection!;
 
             _orderContext = new OrderContext(options);
             _orderContext.Database.EnsureDeleted();
             _orderContext.Database.EnsureCreated();
 
-            _orderRepository = new OrderRepository(_orderContext);
+            _orderRepository = new OrderRepository(_orderContext, TimeProvider.System);
             _orderService = new OrderService(_orderRepository);
 
             await AddReferenceDataAsync(_orderContext);
@@ -82,7 +83,7 @@ namespace Order.Service.Tests
             var orders = await _orderService.GetOrdersAsync();
 
             // Assert
-            Assert.AreEqual(3, orders.Count());
+            Assert.That(orders.Count(), Is.EqualTo(3));
         }
 
         [Test]
@@ -102,18 +103,18 @@ namespace Order.Service.Tests
             var orders = await _orderService.GetOrdersAsync();
 
             // Assert
-            var order1 = orders.SingleOrDefault(x => x.Id == orderId1);
-            var order2 = orders.SingleOrDefault(x => x.Id == orderId2);
-            var order3 = orders.SingleOrDefault(x => x.Id == orderId3);
+            var order1 = orders.Single(x => x.Id == orderId1);
+            var order2 = orders.Single(x => x.Id == orderId2);
+            var order3 = orders.Single(x => x.Id == orderId3);
 
-            Assert.AreEqual(0.8m, order1.TotalCost);
-            Assert.AreEqual(0.9m, order1.TotalPrice);
+            Assert.That(order1.TotalCost, Is.EqualTo(0.8m));
+            Assert.That(order1.TotalPrice, Is.EqualTo(0.9m));
 
-            Assert.AreEqual(1.6m, order2.TotalCost);
-            Assert.AreEqual(1.8m, order2.TotalPrice);
+            Assert.That(order2.TotalCost, Is.EqualTo(1.6m));
+            Assert.That(order2.TotalPrice, Is.EqualTo(1.8m));
 
-            Assert.AreEqual(2.4m, order3.TotalCost);
-            Assert.AreEqual(2.7m, order3.TotalPrice);
+            Assert.That(order3.TotalCost, Is.EqualTo(2.4m));
+            Assert.That(order3.TotalPrice, Is.EqualTo(2.7m));
         }
 
         [Test]
@@ -127,7 +128,7 @@ namespace Order.Service.Tests
             var order = await _orderService.GetOrderByIdAsync(orderId1);
 
             // Assert
-            Assert.AreEqual(orderId1, order.Id);
+            Assert.That(order!.Id, Is.EqualTo(orderId1));
         }
 
         [Test]
@@ -141,7 +142,7 @@ namespace Order.Service.Tests
             var order = await _orderService.GetOrderByIdAsync(orderId1);
 
             // Assert
-            Assert.AreEqual(1, order.Items.Count());
+            Assert.That(order!.Items.Count(), Is.EqualTo(1));
         }
 
         [Test]
@@ -155,9 +156,68 @@ namespace Order.Service.Tests
             var order = await _orderService.GetOrderByIdAsync(orderId1);
 
             // Assert
-            Assert.AreEqual(1.6m, order.TotalCost);
-            Assert.AreEqual(1.8m, order.TotalPrice);
+            Assert.That(order!.TotalCost, Is.EqualTo(1.6m));
+            Assert.That(order.TotalPrice, Is.EqualTo(1.8m));
         }
+
+        #region Null quantity handling
+
+        [Test]
+        public async Task GetOrderByIdAsync_TreatsNullQuantityAsZero()
+        {
+            // Arrange - the schema allows order_item.Quantity to be NULL.
+            var orderId = Guid.NewGuid();
+            await AddOrder(orderId, 2);
+            await AddOrderItemWithNullQuantity(orderId);
+
+            // Act
+            var order = await _orderService.GetOrderByIdAsync(orderId);
+
+            // Assert
+            Assert.That(order, Is.Not.Null);
+            Assert.That(order!.Items.Count(), Is.EqualTo(2));
+
+            var nullQuantityItem = order.Items.Single(x => x.Quantity == 0);
+            Assert.That(nullQuantityItem.TotalCost, Is.EqualTo(0m));
+            Assert.That(nullQuantityItem.TotalPrice, Is.EqualTo(0m));
+
+            // The priced item still contributes its full total.
+            Assert.That(order.TotalCost, Is.EqualTo(1.6m));
+            Assert.That(order.TotalPrice, Is.EqualTo(1.8m));
+        }
+
+        [Test]
+        public async Task GetOrdersAsync_ToleratesNullQuantity()
+        {
+            // Arrange
+            var orderId = Guid.NewGuid();
+            await AddOrder(orderId, 1);
+            await AddOrderItemWithNullQuantity(orderId);
+
+            // Act
+            var orders = await _orderService.GetOrdersAsync();
+
+            // Assert
+            Assert.That(orders.Single().TotalCost, Is.EqualTo(0.8m));
+            Assert.That(orders.Single().ItemCount, Is.EqualTo(2));
+        }
+
+        [Test]
+        public async Task GetCompletedOrderProfitByMonthAsync_ToleratesNullQuantity()
+        {
+            // Arrange
+            var orderId = Guid.NewGuid();
+            await AddOrder(orderId, 1, _orderStatusCompletedId, new DateTime(2024, 5, 1));
+            await AddOrderItemWithNullQuantity(orderId);
+
+            // Act
+            var profit = (await _orderService.GetCompletedOrderProfitByMonthAsync()).ToList();
+
+            // Assert
+            Assert.That(profit.Single().Profit, Is.EqualTo(0.1m));
+        }
+
+        #endregion
 
         #region Task 1 - orders by status
 
@@ -224,10 +284,10 @@ namespace Order.Service.Tests
 
             // Assert
             Assert.That(result.IsSuccess, Is.True);
-            Assert.That(result.Value.StatusName, Is.EqualTo("In Progress"));
+            Assert.That(result.Value!.StatusName, Is.EqualTo("In Progress"));
 
             var reloaded = await _orderService.GetOrderByIdAsync(orderId);
-            Assert.That(reloaded.StatusName, Is.EqualTo("In Progress"));
+            Assert.That(reloaded!.StatusName, Is.EqualTo("In Progress"));
         }
 
         [Test]
@@ -255,7 +315,7 @@ namespace Order.Service.Tests
             Assert.That(result.Errors, Is.Not.Empty);
 
             var unchanged = await _orderService.GetOrderByIdAsync(orderId);
-            Assert.That(unchanged.StatusName, Is.EqualTo("Created"));
+            Assert.That(unchanged!.StatusName, Is.EqualTo("Created"));
         }
 
         #endregion
@@ -281,7 +341,7 @@ namespace Order.Service.Tests
 
             // Assert
             Assert.That(result.IsSuccess, Is.True);
-            Assert.That(result.Value.ResellerId, Is.EqualTo(request.ResellerId));
+            Assert.That(result.Value!.ResellerId, Is.EqualTo(request.ResellerId));
             Assert.That(result.Value.CustomerId, Is.EqualTo(request.CustomerId));
             Assert.That(result.Value.StatusName, Is.EqualTo("Created"));
             Assert.That(result.Value.Items.Count(), Is.EqualTo(1));
@@ -307,7 +367,7 @@ namespace Order.Service.Tests
             var result = await _orderService.CreateOrderAsync(request);
 
             // Assert
-            Assert.That(result.Value.Items.Single().ServiceId, Is.EqualTo(new Guid(_orderServiceEmailId)));
+            Assert.That(result.Value!.Items.Single().ServiceId, Is.EqualTo(new Guid(_orderServiceEmailId)));
             Assert.That(result.Value.Items.Single().ServiceName, Is.EqualTo("Email"));
         }
 
@@ -327,11 +387,11 @@ namespace Order.Service.Tests
 
             // Act
             var created = await _orderService.CreateOrderAsync(request);
-            var fetched = await _orderService.GetOrderByIdAsync(created.Value.Id);
+            var fetched = await _orderService.GetOrderByIdAsync(created.Value!.Id);
 
             // Assert
             Assert.That(fetched, Is.Not.Null);
-            Assert.That(fetched.Id, Is.EqualTo(created.Value.Id));
+            Assert.That(fetched!.Id, Is.EqualTo(created.Value.Id));
             Assert.That(fetched.TotalCost, Is.EqualTo(2.4m));
         }
 
@@ -364,7 +424,7 @@ namespace Order.Service.Tests
         public async Task CreateOrderAsync_ReturnsInvalidForNullRequest()
         {
             // Act
-            var result = await _orderService.CreateOrderAsync(null);
+            var result = await _orderService.CreateOrderAsync(null!);
 
             // Assert
             Assert.That(result.Outcome, Is.EqualTo(OperationOutcome.Invalid));
@@ -431,6 +491,20 @@ namespace Order.Service.Tests
         private async Task AddOrder(Guid orderId, int quantity)
         {
             await AddOrder(orderId, quantity, _orderStatusCreatedId, DateTime.Now);
+        }
+
+        private async Task AddOrderItemWithNullQuantity(Guid orderId)
+        {
+            _orderContext.OrderItem.Add(new Data.Entities.OrderItem
+            {
+                Id = Guid.NewGuid().ToByteArray(),
+                OrderId = orderId.ToByteArray(),
+                ServiceId = _orderServiceEmailId,
+                ProductId = _orderProductEmailId,
+                Quantity = null
+            });
+
+            await _orderContext.SaveChangesAsync();
         }
 
         private async Task AddOrder(Guid orderId, int quantity, byte[] statusId, DateTime createdDate)

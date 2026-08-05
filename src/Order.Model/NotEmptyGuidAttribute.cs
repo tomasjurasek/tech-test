@@ -1,4 +1,3 @@
-using System;
 using System.ComponentModel.DataAnnotations;
 
 namespace Order.Model
@@ -10,13 +9,8 @@ namespace Order.Model
     [AttributeUsage(AttributeTargets.Property | AttributeTargets.Field | AttributeTargets.Parameter)]
     public class NotEmptyGuidAttribute : ValidationAttribute
     {
-        public override bool IsValid(object value)
+        public override bool IsValid(object? value)
         {
-            if (value == null)
-            {
-                return false;
-            }
-
             return value is Guid guid && guid != Guid.Empty;
         }
 
