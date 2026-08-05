@@ -6,8 +6,6 @@ services:
           - 8000:8080
       depends_on:
         - db
-      links:
-        - "db:database"
   db:
     image: mysql:5.7
     container_name: order-db
